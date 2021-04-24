@@ -46,10 +46,19 @@ impl Connector {
         // On Windows, some certificates cannot be loaded by rustls
         // for whatever reason, so we simply skip them.
         // See https://github.com/ctz/rustls-native-certs/issues/5
+
+        // TODO: when running inside Cloudflare workers, we should provide 
+        // alternative way to load OwnedTrustAnchor, perhaps via ENV variables
+        // Worker KV or other Cloudflare native storage
+        #[cfg(target_arch = "wasm32")]
+        let roots = Vec::new();
+            
+        #[cfg(not(target_arch = "wasm32"))]
         let roots = match rustls_native_certs::load_native_certs() {
             Ok(store) | Err((Some(store), _)) => store.roots,
             Err((None, _)) => Vec::new(),
         };
+
         for root in roots {
             tls_config.root_store.roots.push(root);
         }
