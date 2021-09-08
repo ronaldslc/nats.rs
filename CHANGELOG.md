@@ -1,3 +1,119 @@
+# 0.15.0
+
+## Breaking Changes
+
+- #207 Support ADR-15-style JetStream reply subject
+  parsing, with several new fields added to the
+  `JetstreamMessageInfo` struct that can be
+  parsed from a message.
+
+# 0.14.0
+
+## Breaking Changes
+
+- #211 `jetstream::ConsumerConfig.ack_wait` and
+  `jetstream::PubOpts.ttl` have been changed from
+  `isize` to `i64`.
+
+# 0.13.1
+
+## New Features
+
+- #199 implemented `asynk::Subscription::try_next`.
+- #199 implemented conversion traits b/w sync & async
+  Message types.
+- #205 `Options::tls_client_config` allows users to
+  provide a manually-configured `rustls::ClientConfig`
+  for communicating to the server, for cases where
+  certificates are not available on the filesystem.
+
+# 0.13.0
+
+## Improvements
+
+- #197 JetStream configuration objects now implement
+  PartialEq and Eq.
+
+## Breaking Changes
+
+- #197 Some JetStream configuration objects have been
+  simplified while more closely matching the Golang
+  JS client semantics.
+
+# 0.12.1
+
+## Improvements
+
+- #196 minor documentation fix.
+
+# 0.12.0
+
+## Breaking Changes
+
+- #195 JetStream support is now available without
+  any feature set, and the jetstream feature has
+  been removed.
+
+# 0.11.0
+
+## Breaking Changes
+
+- #192 the async_nats crate has been merged into the
+  main nats crate, under the `asynk` module name.
+- #192 the `jetstream::IntervalTree` type has been made
+  private in anticipation of built-in FIFO (ordered)
+  message processing functionality built on top of
+  different internal structures.
+
+# 0.10.1
+
+## Improvements
+
+- #190 exposed the last connected server's max_payload
+  configurable with the new Connection::max_payload
+  method.
+
+# 0.10.0
+
+## Improvements
+
+- #189 ipv6 address parsing support has been added.
+
+## Breaking Changes
+
+- #183 the MSRV bumped to Rust 1.51, which was
+  released on March 25 2021.
+
+# 0.9.18
+
+## Improvements
+
+- #183 reset client writer to None upon disconnection
+
+# 0.9.17
+
+## Improvements
+
+- #180 idempotent unsubscription avoids sending
+  multiple UNSUB messages.
+
+# 0.9.16
+
+## Improvements
+
+- #178 client state has been reorganized to allow
+  reading and writing to make progress independently,
+  preventing issues that were sometimes encountered
+  where the act of creating a subscription would lead
+  to a connection timing out after a slow consumer
+  was detected by the server.
+
+# 0.9.15
+
+## New Features
+
+- #177 Add `request_timeout` support for async-nats
+
 # 0.9.14
 
 ## New Features

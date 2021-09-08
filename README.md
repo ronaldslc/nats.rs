@@ -109,7 +109,7 @@ let response = rsub.iter().take(1);
 
 ## Minimum Supported Rust Version (MSRV)
 
-The minimum supported Rust version is 1.41.0.
+The minimum supported Rust version is 1.51.0.
 
 ## Sync vs Async
 
@@ -131,7 +131,7 @@ The following is a list of features currently supported and planned for the near
 * [X] TLS support
 * [X] Direct async support
 * [X] Crates.io listing
-* [ ] Header Support
+* [x] Header Support
 
 ### Miscellaneous TODOs
 * [ ] Ping timer

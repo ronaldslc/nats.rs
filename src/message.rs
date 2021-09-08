@@ -1,11 +1,15 @@
 use std::{
     fmt, io,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 use crate::{client::Client, Headers};
 
 /// A message received on a subject.
+#[derive(Clone)]
 pub struct Message {
     /// The subject this message came from.
     pub subject: String,
@@ -27,20 +31,18 @@ pub struct Message {
     /// Whether this message has already been successfully double-acked
     /// using `JetStream`.
     #[doc(hidden)]
-    pub double_acked: AtomicBool,
+    pub double_acked: Arc<AtomicBool>,
 }
 
-impl Clone for Message {
-    fn clone(&self) -> Message {
+impl From<crate::asynk::Message> for Message {
+    fn from(asynk: crate::asynk::Message) -> Message {
         Message {
-            subject: self.subject.clone(),
-            reply: self.reply.clone(),
-            data: self.data.clone(),
-            headers: self.headers.clone(),
-            client: self.client.clone(),
-            double_acked: AtomicBool::new(
-                self.double_acked.load(Ordering::Acquire),
-            ),
+            subject: asynk.subject,
+            reply: asynk.reply,
+            data: asynk.data,
+            headers: asynk.headers,
+            client: asynk.client,
+            double_acked: asynk.double_acked,
         }
     }
 }
@@ -65,9 +67,6 @@ impl Message {
     ///
     /// Returns immediately if this message has already been
     /// double-acked.
-    ///
-    /// Requires the `jetstream` feature.
-    #[cfg(feature = "jetstream")]
     pub fn ack(&self) -> io::Result<()> {
         if self.double_acked.load(Ordering::Acquire) {
             return Ok(());
@@ -80,9 +79,6 @@ impl Message {
     /// server acks your ack, use the `double_ack` method instead.
     ///
     /// Does not check whether this message has already been double-acked.
-    ///
-    /// Requires the `jetstream` feature.
-    #[cfg(feature = "jetstream")]
     pub fn ack_kind(
         &self,
         ack_kind: crate::jetstream::AckKind,
@@ -95,9 +91,6 @@ impl Message {
     /// See `AckKind` documentation for details of what each variant means.
     ///
     /// Returns immediately if this message has already been double-acked.
-    ///
-    /// Requires the `jetstream` feature.
-    #[cfg(feature = "jetstream")]
     pub fn double_ack(
         &self,
         ack_kind: crate::jetstream::AckKind,
@@ -159,17 +152,35 @@ impl Message {
     /// Returns `None` if this is not
     /// a `JetStream` message with headers
     /// set.
-    ///
-    /// Requires the `jetstream` feature.
-    #[cfg(feature = "jetstream")]
     pub fn jetstream_message_info(
         &self,
     ) -> Option<crate::jetstream::JetStreamMessageInfo<'_>> {
-        let reply = self.reply.as_ref()?;
-        let mut split = reply.split('.');
-        if split.next()? != "$JS" || split.next()? != "ACK" {
+        const PREFIX: &'static str = "$JS.ACK.";
+        const SKIP: usize = PREFIX.len();
+
+        let mut reply: &str = self.reply.as_ref()?;
+
+        if !reply.starts_with(PREFIX) {
             return None;
         }
+
+        reply = &reply[SKIP..];
+
+        let mut split = reply.split('.');
+
+        // we should avoid allocating to prevent
+        // large performance degradations in
+        // parsing this.
+        let mut tokens: [Option<&str>; 10] = [None; 10];
+        let mut n_tokens = 0;
+        for index in 0..10 {
+            if let Some(token) = split.next() {
+                tokens[index] = Some(token);
+                n_tokens += 1;
+            }
+        }
+
+        let mut token_index = 0;
 
         macro_rules! try_parse {
             () => {
@@ -188,7 +199,13 @@ impl Message {
                 }
             };
             (str) => {
-                if let Some(next) = split.next() {
+                if let Some(next) = tokens[token_index].take() {
+                    #[allow(unused)]
+                    {
+                        // this isn't actually unused, but it's
+                        // difficult for the compiler to infer this.
+                        token_index += 1;
+                    }
                     next
                 } else {
                     log::error!(
@@ -202,19 +219,64 @@ impl Message {
             };
         }
 
-        Some(crate::jetstream::JetStreamMessageInfo {
-            stream: try_parse!(str),
-            consumer: try_parse!(str),
-            delivered: try_parse!(),
-            stream_seq: try_parse!(),
-            consumer_seq: try_parse!(),
-            published: {
-                let nanos: u64 = try_parse!();
-                let offset = std::time::Duration::from_nanos(nanos);
-                std::time::UNIX_EPOCH + offset
-            },
-            pending: try_parse!(),
-        })
+        // now we can try to parse the tokens to
+        // individual types. We use an if-else
+        // chain instead of a match because it
+        // produces more optimal code usually,
+        // and we want to try the 9 (11 - the first 2)
+        // case first because we expect it to
+        // be the most common. We use >= to be
+        // future-proof.
+        if n_tokens >= 9 {
+            Some(crate::jetstream::JetStreamMessageInfo {
+                domain: {
+                    let domain: &str = try_parse!(str);
+                    if domain == "_" {
+                        None
+                    } else {
+                        Some(domain)
+                    }
+                },
+                acc_hash: Some(try_parse!(str)),
+                stream: try_parse!(str),
+                consumer: try_parse!(str),
+                delivered: try_parse!(),
+                stream_seq: try_parse!(),
+                consumer_seq: try_parse!(),
+                published: {
+                    let nanos: u64 = try_parse!();
+                    let offset = std::time::Duration::from_nanos(nanos);
+                    std::time::UNIX_EPOCH + offset
+                },
+                pending: try_parse!(),
+                token: if n_tokens >= 9 {
+                    Some(try_parse!(str))
+                } else {
+                    None
+                },
+            })
+        } else if n_tokens == 7 {
+            // we expect this to be increasingly rare, as older
+            // servers are phased out.
+            Some(crate::jetstream::JetStreamMessageInfo {
+                domain: None,
+                acc_hash: None,
+                stream: try_parse!(str),
+                consumer: try_parse!(str),
+                delivered: try_parse!(),
+                stream_seq: try_parse!(),
+                consumer_seq: try_parse!(),
+                published: {
+                    let nanos: u64 = try_parse!();
+                    let offset = std::time::Duration::from_nanos(nanos);
+                    std::time::UNIX_EPOCH + offset
+                },
+                pending: try_parse!(),
+                token: None,
+            })
+        } else {
+            None
+        }
     }
 }
 

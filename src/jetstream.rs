@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Experimental `JetStream` support enabled via the `jetstream` feature.
+//! Support for the `JetStream` at-least-once messaging system.
 //!
 //! # Examples
 //!
@@ -173,7 +173,6 @@ use std::{
     fmt::Debug,
     io::{self, Error, ErrorKind},
     iter::DoubleEndedIterator,
-    ops::Range,
     time::Duration,
 };
 
@@ -281,8 +280,6 @@ where
 
 impl NatsClient {
     /// Create a `JetStream` stream.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn create_stream<S>(&self, stream_config: S) -> io::Result<StreamInfo>
     where
         StreamConfig: From<S>,
@@ -301,8 +298,6 @@ impl NatsClient {
     }
 
     /// Update a `JetStream` stream.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn update_stream(&self, cfg: &StreamConfig) -> io::Result<StreamInfo> {
         if cfg.name.is_empty() {
             return Err(Error::new(
@@ -318,8 +313,6 @@ impl NatsClient {
 
     /// List all `JetStream` stream names. If you also want stream information,
     /// use the `list_streams` method instead.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn stream_names(&self) -> PagedIterator<'_, String> {
         PagedIterator {
             subject: format!("{}STREAM.NAMES", self.api_prefix()),
@@ -331,8 +324,6 @@ impl NatsClient {
     }
 
     /// List all `JetStream` streams.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn list_streams(&self) -> PagedIterator<'_, StreamInfo> {
         PagedIterator {
             subject: format!("{}STREAM.LIST", self.api_prefix()),
@@ -344,8 +335,6 @@ impl NatsClient {
     }
 
     /// List `JetStream` consumers for a stream.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn list_consumers<S>(
         &self,
         stream: S,
@@ -373,8 +362,6 @@ impl NatsClient {
     }
 
     /// Query `JetStream` stream information.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn stream_info<S: AsRef<str>>(
         &self,
         stream: S,
@@ -392,8 +379,6 @@ impl NatsClient {
     }
 
     /// Purge `JetStream` stream messages.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn purge_stream<S: AsRef<str>>(
         &self,
         stream: S,
@@ -410,8 +395,6 @@ impl NatsClient {
     }
 
     /// Delete message in a `JetStream` stream.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn delete_message<S: AsRef<str>>(
         &self,
         stream: S,
@@ -438,8 +421,6 @@ impl NatsClient {
     }
 
     /// Delete `JetStream` stream.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn delete_stream<S: AsRef<str>>(&self, stream: S) -> io::Result<bool> {
         let stream: &str = stream.as_ref();
         if stream.is_empty() {
@@ -455,8 +436,6 @@ impl NatsClient {
     }
 
     /// Create a `JetStream` consumer.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn create_consumer<S, C>(
         &self,
         stream: S,
@@ -466,7 +445,7 @@ impl NatsClient {
         S: AsRef<str>,
         ConsumerConfig: From<C>,
     {
-        let mut config = ConsumerConfig::from(cfg);
+        let config = ConsumerConfig::from(cfg);
         let stream = stream.as_ref();
         if stream.is_empty() {
             return Err(Error::new(
@@ -475,18 +454,13 @@ impl NatsClient {
             ));
         }
 
-        let subject = if let Some(durable_name) = &config.durable_name {
-            if durable_name.is_empty() {
-                config.durable_name = None;
-                format!("{}CONSUMER.CREATE.{}", self.api_prefix(), stream)
-            } else {
-                format!(
-                    "{}CONSUMER.DURABLE.CREATE.{}.{}",
-                    self.api_prefix(),
-                    stream,
-                    durable_name
-                )
-            }
+        let subject = if let Some(ref durable_name) = config.durable_name {
+            format!(
+                "{}CONSUMER.DURABLE.CREATE.{}.{}",
+                self.api_prefix(),
+                stream,
+                durable_name
+            )
         } else {
             format!("{}CONSUMER.CREATE.{}", self.api_prefix(), stream)
         };
@@ -504,8 +478,6 @@ impl NatsClient {
     }
 
     /// Delete a `JetStream` consumer.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn delete_consumer<S, C>(
         &self,
         stream: S,
@@ -542,8 +514,6 @@ impl NatsClient {
     }
 
     /// Query `JetStream` consumer information.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn consumer_info<S, C>(
         &self,
         stream: S,
@@ -571,8 +541,6 @@ impl NatsClient {
     }
 
     /// Query `JetStream` account information.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn account_info(&self) -> io::Result<AccountInfo> {
         self.js_request(&format!("{}INFO", self.api_prefix()), b"")
     }
@@ -586,6 +554,10 @@ impl NatsClient {
         match res {
             ApiResponse::Ok(stream_info) => Ok(stream_info),
             ApiResponse::Err { error, .. } => {
+                log::error!(
+                    "failed to parse API response: {:?}",
+                    std::str::from_utf8(&res_msg.data)
+                );
                 if let Some(desc) = error.description {
                     Err(Error::new(ErrorKind::Other, desc))
                 } else {
@@ -623,7 +595,7 @@ pub struct Consumer {
 
     /// Contains ranges of processed messages that will be
     /// filtered out upon future receipt.
-    pub dedupe_window: IntervalTree,
+    dedupe_window: IntervalTree,
 }
 
 impl Consumer {
@@ -631,8 +603,6 @@ impl Consumer {
     /// `ConsumerInfo` that may have been returned
     /// from the `nats::Connection::list_consumers`
     /// iterator.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn from_consumer_info(
         ci: ConsumerInfo,
         nc: NatsClient,
@@ -648,8 +618,6 @@ impl Consumer {
     /// already exists, and creates it if not. If you want to use an existing
     /// `Consumer` without this check and creation, use the `Consumer::existing`
     /// method.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn create_or_open<S, C>(
         nc: NatsClient,
         stream: S,
@@ -662,7 +630,7 @@ impl Consumer {
         let stream = stream.as_ref().to_string();
         let cfg = ConsumerConfig::from(cfg);
 
-        if let Some(durable_name) = &cfg.durable_name {
+        if let Some(ref durable_name) = cfg.durable_name {
             // attempt to create a durable config if it does not yet exist
             let consumer_info = nc.consumer_info(&stream, durable_name);
             if let Err(e) = consumer_info {
@@ -679,8 +647,6 @@ impl Consumer {
     }
 
     /// Use an existing `JetStream` `Consumer`
-    ///
-    /// Requires the `jetstream` feature.
     pub fn existing<S, C>(
         nc: NatsClient,
         stream: S,
@@ -694,7 +660,7 @@ impl Consumer {
         let cfg = ConsumerConfig::from(cfg);
 
         let push_subscriber =
-            if let Some(deliver_subject) = &cfg.deliver_subject {
+            if let Some(ref deliver_subject) = cfg.deliver_subject {
                 Some(nc.subscribe(deliver_subject)?)
             } else {
                 None
@@ -742,8 +708,6 @@ impl Consumer {
     /// a message that has already been processed is received, it will
     /// be acked and skipped. Errors for acking deduplicated messages
     /// are not included in the returned `Vec`.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn process_batch<R, F: FnMut(&Message) -> io::Result<R>>(
         &mut self,
         batch_size: usize,
@@ -783,14 +747,17 @@ impl Consumer {
 
         let mut received = 0;
 
-        while let Ok(next) = responses.next_timeout(if received == 0 {
-            // wait "forever" for first message
-            Duration::new(std::u64::MAX >> 2, 0)
-        } else {
-            self.timeout
-                .checked_sub(start.elapsed())
-                .unwrap_or_default()
-        }) {
+        while let Some(next) = {
+            if received == 0 {
+                responses.next()
+            } else {
+                let timeout = self
+                    .timeout
+                    .checked_sub(start.elapsed())
+                    .unwrap_or_default();
+                responses.next_timeout(timeout).ok()
+            }
+        } {
             let next_id = next.jetstream_message_info().unwrap().stream_seq;
 
             if self.dedupe_window.already_processed(next_id) {
@@ -850,8 +817,6 @@ impl Consumer {
     /// the `double_ack` method of the argument message. If you require
     /// both the returned `Ok` from the closure and the `Err` from a
     /// failed ack, use `process_batch` instead.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn process<R, F: Fn(&Message) -> io::Result<R>>(
         &mut self,
         f: F,
@@ -919,8 +884,6 @@ impl Consumer {
     /// the `double_ack` method of the argument message. If you require
     /// both the returned `Ok` from the closure and the `Err` from a
     /// failed ack, use `process_batch` instead.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn process_timeout<R, F: Fn(&Message) -> io::Result<R>>(
         &mut self,
         f: F,
@@ -970,8 +933,6 @@ impl Consumer {
     ///
     /// This is a lower-level method and does not filter messages through the `Consumer`'s
     /// built-in `dedupe_window` as the various `process*` methods do.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn pull(&mut self) -> io::Result<Message> {
         let ret_opt = self
             .pull_opt(NextRequest {
@@ -997,8 +958,6 @@ impl Consumer {
     ///
     /// This is a lower-level method and does not filter messages through the `Consumer`'s
     /// built-in `dedupe_window` as the various `process*` methods do.
-    ///
-    /// Requires the `jetstream` feature.
     pub fn pull_opt(
         &mut self,
         next_request: NextRequest,
@@ -1038,7 +997,7 @@ impl Consumer {
 /// Records ranges of acknowledged IDs for
 /// low-memory deduplication.
 #[derive(Default)]
-pub struct IntervalTree {
+struct IntervalTree {
     // stores interval start-end
     inner: std::collections::BTreeMap<u64, u64>,
 }
@@ -1116,172 +1075,5 @@ impl IntervalTree {
         } else {
             false
         }
-    }
-
-    /// Returns the minimum ID marked as processed,
-    /// if any have been.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use nats::jetstream::IntervalTree;
-    ///
-    /// let mut it = IntervalTree::default();
-    ///
-    /// it.mark_processed(56);
-    /// it.mark_processed(259);
-    ///
-    /// assert_eq!(it.min(), Some(56));
-    /// ```
-    pub fn min(&self) -> Option<u64> {
-        self.inner.iter().next().map(|(l, _h)| *l)
-    }
-
-    /// Returns the maximum ID marked as processed,
-    /// if any have been.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use nats::jetstream::IntervalTree;
-    ///
-    /// let mut it = IntervalTree::default();
-    ///
-    /// it.mark_processed(56);
-    /// it.mark_processed(259);
-    ///
-    /// assert_eq!(it.max(), Some(259));
-    /// ```
-    pub fn max(&self) -> Option<u64> {
-        self.inner.iter().next_back().map(|(_l, h)| *h)
-    }
-
-    /// Returns a `DoubleEndedIterator` over
-    /// non-contiguous gaps that have not been
-    /// processed yet.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::ops::Range;
-    ///
-    /// use nats::jetstream::IntervalTree;
-    ///
-    /// let mut it = IntervalTree::default();
-    ///
-    /// for id in 56..=122 {
-    ///     it.mark_processed(id);
-    /// }
-    ///
-    /// for id in 222..=259 {
-    ///     it.mark_processed(id);
-    /// }
-    ///
-    /// # assert_eq!(it.min(), Some(56));
-    /// # assert_eq!(it.max(), Some(259));
-    ///
-    /// let gaps: Vec<Range<u64>> = it.gaps().collect();
-    ///
-    /// assert_eq!(gaps, vec![Range { start: 123, end: 222 }]);
-    /// ```
-    pub fn gaps<'a>(
-        &'a self,
-    ) -> impl 'a + DoubleEndedIterator<Item = Range<u64>> {
-        let mut iter = self.inner.iter();
-        let mut last_hi = iter.next().map(|(_l, h)| *h);
-        iter.map(move |(lo, hi)| {
-            let lh = last_hi.unwrap();
-            last_hi = Some(*hi);
-
-            assert!(lh + 1 < *lo);
-
-            Range {
-                start: lh + 1,
-                end: *lo,
-            }
-        })
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn range_tree() {
-        let mut rt = IntervalTree::default();
-        assert!(rt.mark_processed(1));
-
-        let mut rt = IntervalTree {
-            inner: vec![(0, 0), (6, 6)].into_iter().collect(),
-        };
-
-        rt.mark_processed(4);
-        assert_eq!(
-            rt.inner,
-            vec![(0, 0), (4, 4), (6, 6)].into_iter().collect()
-        );
-        assert!(rt.already_processed(0));
-        assert!(rt.already_processed(4));
-        assert!(rt.already_processed(6));
-        assert!(!rt.already_processed(7));
-
-        let mut rt = IntervalTree {
-            inner: vec![(3, 3), (6, 6)].into_iter().collect(),
-        };
-
-        rt.mark_processed(4);
-        assert_eq!(rt.inner, vec![(3, 4), (6, 6)].into_iter().collect());
-        assert!(!rt.already_processed(0));
-        assert!(rt.already_processed(3));
-        assert!(rt.already_processed(4));
-        assert!(rt.already_processed(6));
-        assert!(!rt.already_processed(7));
-
-        let mut rt = IntervalTree {
-            inner: vec![(0, 0), (5, 5)].into_iter().collect(),
-        };
-        rt.mark_processed(4);
-        assert_eq!(rt.inner, vec![(0, 0), (4, 5)].into_iter().collect());
-        assert!(rt.already_processed(0));
-        assert!(rt.already_processed(4));
-        assert!(rt.already_processed(5));
-        assert!(!rt.already_processed(6));
-
-        let mut rt = IntervalTree {
-            inner: vec![(2, 3), (5, 6)].into_iter().collect(),
-        };
-        rt.mark_processed(4);
-        assert_eq!(rt.inner, vec![(2, 6)].into_iter().collect());
-        assert!(!rt.already_processed(0));
-        assert!(rt.already_processed(2));
-        assert!(rt.already_processed(3));
-        assert!(rt.already_processed(4));
-        assert!(rt.already_processed(5));
-        assert!(rt.already_processed(6));
-        assert!(!rt.already_processed(7));
-
-        let mut it = IntervalTree::default();
-
-        for id in 56..=122 {
-            it.mark_processed(id);
-        }
-
-        for id in 222..=259 {
-            it.mark_processed(id);
-        }
-
-        assert_eq!(it.min(), Some(56));
-        assert_eq!(it.max(), Some(259));
-
-        let gaps: Vec<Range<u64>> = it.gaps().collect();
-
-        assert_eq!(
-            gaps,
-            vec![Range {
-                start: 123,
-                end: 222
-            }]
-        );
     }
 }

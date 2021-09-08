@@ -1,4 +1,3 @@
-#![cfg(feature = "jetstream")]
 use std::io;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicU16, Ordering::SeqCst};
@@ -50,6 +49,46 @@ fn jetstream_create_consumer() -> io::Result<()> {
 
     nc.create_stream("stream1")?;
     nc.create_consumer("stream1", "consumer1")?;
+    Ok(())
+}
+
+#[test]
+fn jetstream_queue_process() -> io::Result<()> {
+    let server = server();
+
+    let nc = nats::connect(&format!("localhost:{}", server.port)).unwrap();
+
+    let _ = nc.delete_stream("qtest1");
+
+    nc.create_stream(StreamConfig {
+        name: "qtest1".to_string(),
+        retention: RetentionPolicy::WorkQueue,
+        storage: StorageType::File,
+        ..Default::default()
+    })?;
+
+    let mut consumer1 = nc.create_consumer(
+        "qtest1",
+        ConsumerConfig {
+            max_deliver: 5,
+            durable_name: Some("consumer1".to_string()),
+            ack_policy: AckPolicy::Explicit,
+            replay_policy: ReplayPolicy::Instant,
+            deliver_policy: DeliverPolicy::All,
+            ack_wait: 30 * 1_000_000_000,
+            deliver_subject: None,
+            ..Default::default()
+        },
+    )?;
+
+    for i in 1..=1000 {
+        nc.publish("qtest1", format!("{}", i))?;
+    }
+
+    for _ in 1..=1000 {
+        consumer1.process(|_msg| Ok(()))?;
+    }
+
     Ok(())
 }
 
@@ -143,7 +182,7 @@ fn jetstream_basics() -> io::Result<()> {
 
 #[test]
 fn jetstream_libdoc_test() {
-    use nats::jetstream::{AckPolicy, Consumer, ConsumerConfig};
+    use nats::jetstream::Consumer;
 
     let server = server();
 
@@ -186,5 +225,5 @@ fn jetstream_libdoc_test() {
     let results: Vec<std::io::Result<usize>> =
         consumer.process_batch(batch_size, |msg| Ok(msg.data.len()));
     let flipped: std::io::Result<Vec<usize>> = results.into_iter().collect();
-    let sizes: Vec<usize> = flipped.unwrap();
+    let _sizes: Vec<usize> = flipped.unwrap();
 }
